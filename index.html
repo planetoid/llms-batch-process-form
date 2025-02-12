@@ -15,43 +15,18 @@
                         <h3 class="card-title">Batch Processing Form</h3>
                     </div>
                     <div class="card-body">
-                        <!-- Local Development Alert -->
-                        <div class="alert alert-warning">
-                            <h5>Local Development Notice:</h5>
-                            <p>To test this locally, you need either:</p>
-                            <ol>
-                                <li>Install a CORS proxy browser extension (temporary solution)</li>
-                                <li>Or use our Node.js proxy server (recommended):</li>
-                            </ol>
-                            <pre class="bg-light p-2">
-// server.js
-const express = require('express');
-const cors = require('cors');
-const { createProxyMiddleware } = require('http-proxy-middleware');
-
-const app = express();
-app.use(cors());
-
-app.use('/api', createProxyMiddleware({
-    target: 'https://api.anthropic.com',
-    changeOrigin: true,
-    pathRewrite: {
-        '^/api': '/v1'
-    }
-}));
-
-app.listen(3000);
-</pre>
+                        <div class="alert alert-info mb-4">
+                            <h5>API Endpoint Notice:</h5>
+                            <p>This form uses a Cloudflare Worker as a proxy to handle CORS and API requests.</p>
+                            <p>Current endpoint: <code id="currentEndpoint">Loading...</code></p>
                         </div>
 
                         <form id="batchForm">
                             <div class="mb-3">
-                                <label for="useProxy" class="form-label">API Endpoint</label>
-                                <select class="form-select" id="useProxy">
-                                    <option value="direct">Direct API (Production)</option>
-                                    <option value="proxy" selected>Local Proxy (Development)</option>
-                                </select>
-                                <div class="form-text">Select the API endpoint based on your environment.</div>
+                                <label for="apiEndpoint" class="form-label">Worker Endpoint</label>
+                                <input type="text" class="form-control" id="apiEndpoint" 
+                                       value="https://anthropic-batch.your-subdomain.workers.dev" required>
+                                <div class="form-text">Your Cloudflare Worker endpoint URL.</div>
                             </div>
 
                             <div class="mb-3">
@@ -116,6 +91,18 @@ app.listen(3000);
     <script>
         let excelData = [];
 
+        // Update current endpoint display
+        function updateEndpointDisplay() {
+            const endpoint = document.getElementById('apiEndpoint').value;
+            document.getElementById('currentEndpoint').textContent = endpoint;
+        }
+
+        // Initial endpoint display
+        updateEndpointDisplay();
+
+        // Update endpoint display when input changes
+        document.getElementById('apiEndpoint').addEventListener('input', updateEndpointDisplay);
+
         document.getElementById('excelFile').addEventListener('change', function(e) {
             const file = e.target.files[0];
             const reader = new FileReader();
@@ -164,7 +151,7 @@ app.listen(3000);
                 maxTokens: parseInt(document.getElementById('maxTokens').value),
                 systemPrompt: document.getElementById('systemPrompt').value,
                 useCache: document.getElementById('useCache').checked,
-                useProxy: document.getElementById('useProxy').value === 'proxy'
+                apiEndpoint: document.getElementById('apiEndpoint').value.trim()
             };
 
             try {
@@ -186,12 +173,7 @@ app.listen(3000);
                     }
                 }));
 
-                // Choose API endpoint based on environment
-                const apiUrl = formData.useProxy 
-                    ? 'https://your-worker.your-subdomain.workers.dev/messages/batches'  // Cloudflare Worker
-                    : 'https://api.anthropic.com/v1/messages/batches'; // Direct API
-
-                const response = await fetch(apiUrl, {
+                const response = await fetch(`${formData.apiEndpoint}/messages/batches`, {
                     method: 'POST',
                     headers: {
                         'x-api-key': formData.apiKey,
@@ -210,7 +192,7 @@ app.listen(3000);
                 showStatus(data);
             } catch (error) {
                 if (error instanceof TypeError && error.message === 'Failed to fetch') {
-                    showError('Network Error: Failed to connect to the server. Make sure the proxy server is running if using local development mode.');
+                    showError('Network Error: Failed to connect to the Worker. Please check the endpoint URL and ensure the Worker is deployed.');
                 } else {
                     showError(error.message);
                 }
