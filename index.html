@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Batch Processing Form</title>
-    <!-- 使用 minified 版本的 Bootstrap CSS -->
+    <title>Claude API Batch Processing</title>
+    <!-- 使用 minified Bootstrap CSS -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
     <style>
         .loading {
@@ -26,34 +26,62 @@
         @keyframes spinner {
             to { transform: rotate(360deg); }
         }
+        .debug-panel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+            padding: 1rem;
+            font-size: 0.875rem;
+            display: none;
+        }
+        .debug-panel.show {
+            display: block;
+        }
+        .progress {
+            height: 0.5rem;
+        }
     </style>
 </head>
 <body>
-    <div class="container mt-5">
+    <div class="container mt-5 mb-5">
         <div class="row justify-content-center">
             <div class="col-md-8">
                 <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">Batch Processing Form</h3>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h3 class="card-title mb-0">Claude API Batch Processing</h3>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleDebug">Debug</button>
                     </div>
                     <div class="card-body">
                         <div class="alert alert-info mb-4">
-                            <h5>API Endpoint:</h5>
-                            <p>Current endpoint: <code id="currentEndpoint">Loading...</code></p>
+                            <h5 class="alert-heading">API Endpoint Information</h5>
+                            <p class="mb-0">Current endpoint: <code id="currentEndpoint">Loading...</code></p>
+                            <div id="endpointStatus" class="mt-2"></div>
                         </div>
 
                         <form id="batchForm">
                             <div class="mb-3">
                                 <label for="apiEndpoint" class="form-label">Worker Endpoint</label>
-                                <input type="text" class="form-control" id="apiEndpoint" 
-                                       value="https://anthropic-batch.your-subdomain.workers.dev" required>
-                                <div class="form-text">Your Cloudflare Worker endpoint URL.</div>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="apiEndpoint" 
+                                           value="https://your-worker.workers.dev" required>
+                                    <button class="btn btn-outline-secondary" type="button" id="testEndpoint">Test</button>
+                                </div>
+                                <div class="form-text">Your Cloudflare Worker endpoint URL</div>
                             </div>
 
                             <div class="mb-3">
                                 <label for="apiKey" class="form-label">API Key</label>
-                                <input type="password" class="form-control" id="apiKey" required>
-                                <div class="form-text">Your Anthropic API key for authentication.</div>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="apiKey" required>
+                                    <button class="btn btn-outline-secondary" type="button" id="toggleApiKey">
+                                        <span class="d-none">Hide</span>
+                                        <span>Show</span>
+                                    </button>
+                                </div>
+                                <div class="form-text">Your Anthropic API key for authentication</div>
                             </div>
 
                             <div class="mb-3">
@@ -65,25 +93,25 @@
                                     <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
                                     <option value="claude-3-opus-20240229">Claude 3 Opus</option>
                                 </select>
-                                <div class="form-text">Select the Claude model version.</div>
+                                <div class="form-text">Select the Claude model version</div>
                             </div>
 
                             <div class="mb-3">
                                 <label for="maxTokens" class="form-label">Max Tokens</label>
                                 <input type="number" class="form-control" id="maxTokens" value="1024" min="1" max="4096" required>
-                                <div class="form-text">Maximum number of tokens (1-4096) to generate in the response.</div>
+                                <div class="form-text">Maximum number of tokens (1-4096) to generate in the response</div>
                             </div>
 
                             <div class="mb-3">
                                 <label for="systemPrompt" class="form-label">System Prompt</label>
                                 <textarea class="form-control" id="systemPrompt" rows="3"></textarea>
-                                <div class="form-text">Optional system message to set context or behavior for the model.</div>
+                                <div class="form-text">Optional system message to set context or behavior for the model</div>
                             </div>
 
                             <div class="mb-3 form-check">
                                 <input type="checkbox" class="form-check-input" id="useCache" checked>
                                 <label class="form-check-label" for="useCache">Enable Cache</label>
-                                <div class="form-text mt-1">
+                                <div class="form-text">
                                     Enable prompt caching to reduce costs (30-98% cache hit rates). Cache entries expire after 5 minutes.
                                 </div>
                             </div>
@@ -98,7 +126,21 @@
                             </div>
 
                             <div id="excelInfo" class="alert alert-info d-none">
-                                No file loaded yet
+                                <div class="excel-summary"></div>
+                                <div class="excel-preview mt-2 d-none">
+                                    <h6>Data Preview:</h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>custom_id</th>
+                                                    <th>user_message</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody></tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </div>
 
                             <button type="submit" class="btn btn-primary w-100 submit-btn">Submit Batch</button>
@@ -117,38 +159,115 @@
         </div>
     </div>
 
+    <!-- Debug Panel -->
+    <div class="debug-panel">
+        <div class="container">
+            <div class="row">
+                <div class="col">
+                    <h6>Debug Information</h6>
+                    <pre id="debugOutput" class="bg-light p-2" style="max-height: 200px; overflow-y: auto;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 延遲載入 XLSX -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
     <script>
-        // 等待 DOM 載入完成
-        document.addEventListener('DOMContentLoaded', init);
+        // Debug State
+        const debugState = {
+            domLoaded: false,
+            xlsxLoaded: false,
+            initCompleted: false,
+            errors: [],
+            logs: []
+        };
 
+        // 記錄初始載入時間
+        const pageLoadStart = performance.now();
+
+        // Debug 功能
+        function debugLog(message, type = 'info') {
+            const timestamp = new Date().toISOString();
+            const log = `[${timestamp}] [${type}] ${message}`;
+            debugState.logs.push(log);
+            
+            // 更新 debug panel
+            const debugOutput = document.getElementById('debugOutput');
+            if (debugOutput) {
+                debugOutput.textContent = debugState.logs.join('\n');
+                debugOutput.scrollTop = debugOutput.scrollHeight;
+            }
+            
+            // 同時輸出到 console
+            console[type](message);
+        }
+
+        // 監聽所有資源載入
+        window.addEventListener('load', function() {
+            const loadTime = performance.now() - pageLoadStart;
+            debugLog(`Page fully loaded in ${loadTime}ms`);
+            
+            // 檢查資源載入狀態
+            const resources = performance.getEntriesByType('resource');
+            resources.forEach(resource => {
+                if (resource.duration > 1000) {
+                    debugLog(`Slow resource load: ${resource.name} (${resource.duration}ms)`, 'warn');
+                }
+            });
+        });
+
+        // 檢查 XLSX 載入
+        function checkXLSX() {
+            if (typeof XLSX !== 'undefined') {
+                debugState.xlsxLoaded = true;
+                debugLog('XLSX library loaded successfully');
+            } else {
+                const error = 'XLSX library failed to load';
+                debugState.errors.push(error);
+                debugLog(error, 'error');
+            }
+        }
+
+        // 檢查必要元素
+        function checkRequiredElements() {
+            const requiredElements = [
+                'apiEndpoint',
+                'apiKey',
+                'model',
+                'maxTokens',
+                'systemPrompt',
+                'useCache',
+                'excelFile',
+                'currentEndpoint'
+            ];
+
+            requiredElements.forEach(id => {
+                const element = document.getElementById(id);
+                if (!element) {
+                    const error = `Required element missing: ${id}`;
+                    debugState.errors.push(error);
+                    debugLog(error, 'error');
+                }
+            });
+        }
+
+        // Excel 處理
         let excelData = [];
-        let isProcessing = false;
-
-        function init() {
-            updateEndpointDisplay();
-            setupEventListeners();
-        }
-
-        function updateEndpointDisplay() {
-            const endpoint = document.getElementById('apiEndpoint').value;
-            document.getElementById('currentEndpoint').textContent = endpoint;
-        }
-
-        function setupEventListeners() {
-            document.getElementById('apiEndpoint').addEventListener('input', updateEndpointDisplay);
-            document.getElementById('excelFile').addEventListener('change', handleFileUpload);
-            document.getElementById('batchForm').addEventListener('submit', handleFormSubmit);
-        }
 
         function handleFileUpload(e) {
             const file = e.target.files[0];
             if (!file) return;
 
+            debugLog(`Processing file: ${file.name}`);
             const reader = new FileReader();
             reader.onload = handleFileRead;
-            reader.onerror = () => showError('Error reading file');
+            reader.onerror = () => {
+                const error = 'Error reading file';
+                debugLog(error, 'error');
+                showError(error);
+            };
             reader.readAsArrayBuffer(file);
         }
 
@@ -160,14 +279,44 @@
                 const worksheet = workbook.Sheets[firstSheetName];
                 excelData = XLSX.utils.sheet_to_json(worksheet);
                 
-                const infoElement = document.getElementById('excelInfo');
-                infoElement.textContent = `Loaded ${excelData.length} rows from Excel`;
-                infoElement.classList.remove('d-none');
+                debugLog(`Excel data loaded: ${excelData.length} rows`);
+                
+                // 顯示 Excel 資訊
+                showExcelInfo();
+                
             } catch (error) {
+                debugLog(`Excel processing error: ${error.message}`, 'error');
                 showError('Error reading Excel file: ' + error.message);
             }
         }
 
+        function showExcelInfo() {
+            const infoElement = document.getElementById('excelInfo');
+            const summaryElement = infoElement.querySelector('.excel-summary');
+            const previewElement = infoElement.querySelector('.excel-preview');
+            const previewBody = previewElement.querySelector('tbody');
+            
+            // 顯示摘要
+            summaryElement.textContent = `Loaded ${excelData.length} rows from Excel`;
+            
+            // 顯示預覽 (最多5筆)
+            if (excelData.length > 0) {
+                previewBody.innerHTML = '';
+                excelData.slice(0, 5).forEach(row => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${row.custom_id || 'N/A'}</td>
+                        <td>${row.user_message ? row.user_message.substring(0, 50) + '...' : 'N/A'}</td>
+                    `;
+                    previewBody.appendChild(tr);
+                });
+                previewElement.classList.remove('d-none');
+            }
+            
+            infoElement.classList.remove('d-none');
+        }
+
+        // 表單處理
         async function handleFormSubmit(e) {
             e.preventDefault();
             if (isProcessing) return;
@@ -186,63 +335,29 @@
             if (!validateFormData(formData)) return;
 
             try {
+                debugLog('Starting batch submission...');
                 setProcessing(true, submitBtn);
                 const requests = createRequests(formData);
+                debugLog(`Created ${requests.length} requests`);
+                
                 const response = await sendBatchRequest(formData, requests);
                 const data = await handleResponse(response);
+                debugLog('Batch submitted successfully', 'info');
                 showStatus(data);
             } catch (error) {
+                debugLog(`Batch submission error: ${error.message}`, 'error');
                 handleError(error);
             } finally {
                 setProcessing(false, submitBtn);
             }
         }
 
-        function getFormData() {
-            return {
-                apiKey: document.getElementById('apiKey').value,
-                model: document.getElementById('model').value,
-                maxTokens: parseInt(document.getElementById('maxTokens').value),
-                systemPrompt: document.getElementById('systemPrompt').value,
-                useCache: document.getElementById('useCache').checked,
-                apiEndpoint: document.getElementById('apiEndpoint').value.trim()
-            };
-        }
-
-        function validateFormData(formData) {
-            if (!formData.apiKey) {
-                showError('API Key is required');
-                return false;
-            }
-            if (formData.maxTokens < 1 || formData.maxTokens > 4096) {
-                showError('Max tokens must be between 1 and 4096');
-                return false;
-            }
-            return true;
-        }
-
-        function createRequests(formData) {
-            return excelData.map(row => ({
-                custom_id: row.custom_id,
-                params: {
-                    model: formData.model,
-                    max_tokens: formData.maxTokens,
-                    system: [
-                        {
-                            type: "text",
-                            text: formData.systemPrompt,
-                            ...(formData.useCache && { cache_control: { type: "ephemeral" } })
-                        }
-                    ],
-                    messages: [
-                        { role: "user", content: row.user_message }
-                    ]
-                }
-            }));
-        }
-
+        // API 請求處理
         async function sendBatchRequest(formData, requests) {
-            return fetch(`${formData.apiEndpoint}/messages/batches`, {
+            const endpoint = `${formData.apiEndpoint}/messages/batches`;
+            debugLog(`Sending request to: ${endpoint}`);
+            
+            return fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'x-api-key': formData.apiKey,
@@ -261,49 +376,5 @@
             return data;
         }
 
-        function setProcessing(state, button) {
-            isProcessing = state;
-            if (state) {
-                button.classList.add('loading');
-                button.disabled = true;
-            } else {
-                button.classList.remove('loading');
-                button.disabled = false;
-            }
-        }
-
-        function resetStatus() {
-            document.getElementById('error').classList.add('d-none');
-            document.getElementById('status').classList.add('d-none');
-            document.querySelector('.progress').classList.add('d-none');
-        }
-
-        function showError(message) {
-            const errorElement = document.getElementById('error');
-            errorElement.textContent = message;
-            errorElement.classList.remove('d-none');
-        }
-
-        function handleError(error) {
-            if (error instanceof TypeError && error.message === 'Failed to fetch') {
-                showError('Network Error: Failed to connect to the Worker. Please check the endpoint URL and ensure the Worker is deployed.');
-            } else {
-                showError(error.message);
-            }
-        }
-
-        function showStatus(data) {
-            const statusElement = document.getElementById('status');
-            const statusContent = document.getElementById('statusContent');
-            statusContent.innerHTML = `
-                <div>Batch ID: ${data.id}</div>
-                <div>Status: ${data.processing_status}</div>
-                <div>Processing: ${data.request_counts.processing}</div>
-                <div>Succeeded: ${data.request_counts.succeeded}</div>
-                <div>Errored: ${data.request_counts.errored}</div>
-            `;
-            statusElement.classList.remove('d-none');
-        }
-    </script>
-</body>
-</html>
+        // 工具函數
+        let isProcessing
