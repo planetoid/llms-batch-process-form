@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Processing Form</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Batch Processing Form</h3>
+                    </div>
+                    <div class="card-body">
+                        <!-- Local Development Alert -->
+                        <div class="alert alert-warning">
+                            <h5>Local Development Notice:</h5>
+                            <p>To test this locally, you need either:</p>
+                            <ol>
+                                <li>Install a CORS proxy browser extension (temporary solution)</li>
+                                <li>Or use our Node.js proxy server (recommended):</li>
+                            </ol>
+                            <pre class="bg-light p-2">
+// server.js
+const express = require('express');
+const cors = require('cors');
+const { createProxyMiddleware } = require('http-proxy-middleware');
+
+const app = express();
+app.use(cors());
+
+app.use('/api', createProxyMiddleware({
+    target: 'https://api.anthropic.com',
+    changeOrigin: true,
+    pathRewrite: {
+        '^/api': '/v1'
+    }
+}));
+
+app.listen(3000);
+</pre>
+                        </div>
+
+                        <form id="batchForm">
+                            <div class="mb-3">
+                                <label for="useProxy" class="form-label">API Endpoint</label>
+                                <select class="form-select" id="useProxy">
+                                    <option value="direct">Direct API (Production)</option>
+                                    <option value="proxy" selected>Local Proxy (Development)</option>
+                                </select>
+                                <div class="form-text">Select the API endpoint based on your environment.</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="apiKey" class="form-label">API Key</label>
+                                <input type="password" class="form-control" id="apiKey" required>
+                                <div class="form-text">Your Anthropic API key for authentication.</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="model" class="form-label">Model</label>
+                                <input type="text" class="form-control" id="model" value="claude-3-5-sonnet-20241022" required>
+                                <div class="form-text">
+                                    Supported models: claude-3-5-sonnet-20240620, claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022, claude-3-haiku-20240307, claude-3-opus-20240229
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="maxTokens" class="form-label">Max Tokens</label>
+                                <input type="number" class="form-control" id="maxTokens" value="1024" required>
+                                <div class="form-text">Maximum number of tokens to generate in the response.</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="systemPrompt" class="form-label">System Prompt</label>
+                                <textarea class="form-control" id="systemPrompt" rows="3"></textarea>
+                                <div class="form-text">Optional system message to set context or behavior for the model.</div>
+                            </div>
+
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="useCache" checked>
+                                <label class="form-check-label" for="useCache">Enable Cache</label>
+                                <div class="form-text mt-1">
+                                    Enable prompt caching to reduce costs (30-98% cache hit rates). Cache entries expire after 5 minutes.
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="excelFile" class="form-label">Upload Excel File</label>
+                                <input type="file" class="form-control" id="excelFile" accept=".xlsx,.xls" required>
+                                <div class="form-text">
+                                    Upload Excel file with columns: custom_id (unique identifier) and user_message (content to send).
+                                    Maximum 100,000 requests or 256 MB per batch. Results available for 29 days.
+                                </div>
+                            </div>
+
+                            <div id="excelInfo" class="alert alert-info d-none">
+                                No file loaded yet
+                            </div>
+
+                            <button type="submit" class="btn btn-primary w-100">Submit Batch</button>
+                        </form>
+
+                        <div id="error" class="alert alert-danger mt-3 d-none"></div>
+                        <div id="status" class="alert alert-success mt-3 d-none"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script>
+        let excelData = [];
+
+        document.getElementById('excelFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    excelData = XLSX.utils.sheet_to_json(worksheet);
+                    
+                    const infoElement = document.getElementById('excelInfo');
+                    infoElement.textContent = `Loaded ${excelData.length} rows from Excel`;
+                    infoElement.classList.remove('d-none');
+                } catch (error) {
+                    showError('Error reading Excel file: ' + error.message);
+                }
+            };
+
+            reader.onerror = function() {
+                showError('Error reading file');
+            };
+
+            if (file) {
+                reader.readAsArrayBuffer(file);
+            }
+        });
+
+        document.getElementById('batchForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const errorElement = document.getElementById('error');
+            const statusElement = document.getElementById('status');
+            errorElement.classList.add('d-none');
+            statusElement.classList.add('d-none');
+
+            if (!excelData.length) {
+                showError('Please upload an Excel file first');
+                return;
+            }
+
+            const formData = {
+                apiKey: document.getElementById('apiKey').value,
+                model: document.getElementById('model').value,
+                maxTokens: parseInt(document.getElementById('maxTokens').value),
+                systemPrompt: document.getElementById('systemPrompt').value,
+                useCache: document.getElementById('useCache').checked,
+                useProxy: document.getElementById('useProxy').value === 'proxy'
+            };
+
+            try {
+                const requests = excelData.map(row => ({
+                    custom_id: row.custom_id,
+                    params: {
+                        model: formData.model,
+                        max_tokens: formData.maxTokens,
+                        system: [
+                            {
+                                type: "text",
+                                text: formData.systemPrompt,
+                                ...(formData.useCache && { cache_control: { type: "ephemeral" } })
+                            }
+                        ],
+                        messages: [
+                            { role: "user", content: row.user_message }
+                        ]
+                    }
+                }));
+
+                // Choose API endpoint based on environment
+                const apiUrl = formData.useProxy 
+                    ? 'https://your-worker.your-subdomain.workers.dev/messages/batches'  // Cloudflare Worker
+                    : 'https://api.anthropic.com/v1/messages/batches'; // Direct API
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': formData.apiKey,
+                        'anthropic-version': '2023-06-01',
+                        'content-type': 'application/json'
+                    },
+                    body: JSON.stringify({ requests })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${data.error?.message || 'Failed to process batch'}`);
+                }
+
+                showStatus(data);
+            } catch (error) {
+                if (error instanceof TypeError && error.message === 'Failed to fetch') {
+                    showError('Network Error: Failed to connect to the server. Make sure the proxy server is running if using local development mode.');
+                } else {
+                    showError(error.message);
+                }
+            }
+        });
+
+        function showError(message) {
+            const errorElement = document.getElementById('error');
+            errorElement.textContent = message;
+            errorElement.classList.remove('d-none');
+        }
+
+        function showStatus(data) {
+            const statusElement = document.getElementById('status');
+            statusElement.innerHTML = `
+                <div>Batch ID: ${data.id}</div>
+                <div>Status: ${data.processing_status}</div>
+                <div>Processing: ${data.request_counts.processing}</div>
+                <div>Succeeded: ${data.request_counts.succeeded}</div>
+                <div>Errored: ${data.request_counts.errored}</div>
+            `;
+            statusElement.classList.remove('d-none');
+        }
+    </script>
+</body>
+</html>
