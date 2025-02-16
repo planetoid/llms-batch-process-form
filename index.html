@@ -445,7 +445,35 @@
 
     async function sendBatchRequest(formData, requests) {
         const endpoint = `${formData.apiEndpoint}/messages/batches`;
+
+        // 修改 requests 格式，加入 cache_control
+        const modifiedRequests = requests.map(request => {
+            if (request.params.system) {
+                // 如果原本就有 system 內容，替每個部分加入 cache_control
+                request.params.system = request.params.system.map(sys => ({
+                    ...sys,
+                    cache_control: { type: "ephemeral" }
+                }));
+            }
+            return request;
+        });
+
+        // Prepare request body (移除 use_cache)
+        const requestBody = {
+            requests: modifiedRequests
+        };
+
+        // Log request details
         debugLog(`Sending request to: ${endpoint}`);
+        debugLog('Request Headers:', 'debug');
+        debugLog(JSON.stringify({
+            'x-api-key': '********', // Hide API key
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json'
+        }, null, 2), 'debug');
+
+        debugLog('Request Body:', 'debug');
+        debugLog(JSON.stringify(requestBody, null, 2), 'debug');
 
         const response = await fetch(endpoint, {
             method: 'POST',
@@ -454,18 +482,37 @@
                 'anthropic-version': '2023-06-01',
                 'content-type': 'application/json'
             },
-            body: JSON.stringify({
-                requests,
-                use_cache: formData.useCache
-            })
+            body: JSON.stringify(requestBody)
         });
 
+        // Log response
+        const responseText = await response.text();
+        debugLog('Response Status:', 'debug');
+        debugLog(`${response.status} ${response.statusText}`, 'debug');
+
+        debugLog('Response Headers:', 'debug');
+        debugLog(JSON.stringify(Object.fromEntries([...response.headers]), null, 2), 'debug');
+
+        debugLog('Response Body:', 'debug');
+        debugLog(responseText, 'debug');
+
         if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error?.message || `HTTP ${response.status}`);
+            let errorMessage;
+            try {
+                const errorData = JSON.parse(responseText);
+                errorMessage = errorData.error?.message || `HTTP ${response.status}`;
+            } catch (e) {
+                errorMessage = `HTTP ${response.status}: ${responseText}`;
+            }
+            throw new Error(errorMessage);
         }
 
-        return response;
+        // Return a new response since we consumed the original one
+        return new Response(responseText, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers
+        });
     }
 
     async function handleResponse(response) {
