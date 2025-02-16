@@ -26,9 +26,20 @@ function debugLog(message, type = 'info') {
     console[type](message);
 }
 
+function getWorkerFromURL() {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('worker');
+}
+
 // Form initialization
 function initializeForm() {
     const endpoint = document.getElementById('apiEndpoint');
+
+    const workerFromURL = getWorkerFromURL();
+    if (workerFromURL) {
+        endpoint.value = workerFromURL;
+    }
+    
     const testButton = document.getElementById('testEndpoint');
     const formContent = document.querySelector('.form-content');
     const submitButton = document.querySelector('button[type="submit"]');
