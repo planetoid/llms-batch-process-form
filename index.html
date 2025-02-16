@@ -61,6 +61,10 @@
             font-size: 0.75rem;
             padding: 0.25em 0.5em;
         }
+        .required-field::after {
+            content: " *";
+            color: red;
+        }
     </style>
 </head>
 <body>
@@ -81,7 +85,7 @@
 
                     <form id="batchForm">
                         <div class="mb-3">
-                            <label for="apiEndpoint" class="form-label">Worker Endpoint</label>
+                            <label for="apiEndpoint" class="form-label required-field">Worker Endpoint</label>
                             <div class="input-group">
                                 <input type="text" class="form-control" id="apiEndpoint"
                                        placeholder="https://your-worker.workers.dev" required>
@@ -92,7 +96,7 @@
 
                         <div class="form-content disabled">
                             <div class="mb-3">
-                                <label for="apiKey" class="form-label">API Key</label>
+                                <label for="apiKey" class="form-label required-field">API Key</label>
                                 <div class="input-group">
                                     <input type="password" class="form-control" id="apiKey" required>
                                     <button class="btn btn-outline-secondary" type="button" id="toggleApiKey">
@@ -104,7 +108,7 @@
                             </div>
 
                             <div class="mb-3">
-                                <label for="model" class="form-label">Model</label>
+                                <label for="model" class="form-label required-field">Model</label>
                                 <select class="form-select" id="model" required>
                                     <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Latest)</option>
                                     <option value="claude-3-5-sonnet-20240620">Claude 3.5 Sonnet</option>
@@ -116,7 +120,7 @@
                             </div>
 
                             <div class="mb-3">
-                                <label for="maxTokens" class="form-label">Max Tokens</label>
+                                <label for="maxTokens" class="form-label required-field">Max Tokens</label>
                                 <input type="number" class="form-control" id="maxTokens" value="1024" min="1" max="4096" required>
                                 <div class="form-text">Maximum number of tokens (1-4096) to generate in the response</div>
                             </div>
@@ -128,7 +132,7 @@
                             </div>
 
                             <div class="mb-3">
-                                <label for="excelFile" class="form-label">Upload Excel File</label> (<a href="example_files/batch-example.xlsx">Example Excel file</a>)
+                                <label for="excelFile" class="form-label required-field">Upload Excel File</label> (<a href="example_files/batch-example.xlsx">Example Excel file</a>)
                                 <input type="file" class="form-control" id="excelFile" accept=".xlsx,.xls" required>
                                 <div class="form-text">
                                     Upload Excel file with columns: custom_id (unique identifier) and user_message (content to send).
