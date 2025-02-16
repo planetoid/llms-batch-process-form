@@ -424,7 +424,13 @@
             params: {
                 model: formData.model,
                 max_tokens: formData.maxTokens,
-                system: formData.systemPrompt || undefined,
+                system: formData.systemPrompt ? [
+                    {
+                        type: "text",
+                        text: formData.systemPrompt,
+                        cache_control: { type: "ephemeral" }
+                    }
+                ] : undefined,
                 messages: [{
                     role: 'user',
                     content: row.user_message
