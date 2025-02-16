@@ -421,15 +421,16 @@
     function createRequests(formData) {
         return excelData.map(row => ({
             custom_id: row.custom_id?.toString() || generateCustomId(),
-            model: formData.model,
-            max_tokens: formData.maxTokens,
-            system: formData.systemPrompt || undefined,
-            messages: [{
-                role: 'user',
-                content: row.user_message
-            }]
+            params: {
+                model: formData.model,
+                max_tokens: formData.maxTokens,
+                system: formData.systemPrompt || undefined,
+                messages: [{
+                    role: 'user',
+                    content: row.user_message
+                }]
+            }
         }));
-    }
 
     function generateCustomId() {
         return 'req_' + Math.random().toString(36).substr(2, 9);
