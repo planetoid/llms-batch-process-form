@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Claude API Batch Processing</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <style>
         .loading {
             cursor: not-allowed;
@@ -45,6 +46,20 @@
         .form-content.disabled {
             opacity: 0.5;
             pointer-events: none;
+        }
+        .results-table {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .text-wrap {
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 0.875rem;
+        }
+        .badge {
+            font-size: 0.75rem;
+            padding: 0.25em 0.5em;
         }
     </style>
 </head>
@@ -112,14 +127,6 @@
                                 <div class="form-text">Optional system message to set context or behavior for the model</div>
                             </div>
 
-                            <div class="mb-3 form-check">
-                                <input type="checkbox" class="form-check-input" id="useCache" checked>
-                                <label class="form-check-label" for="useCache">Enable Cache</label>
-                                <div class="form-text">
-                                    Enable prompt caching to reduce costs (30-98% cache hit rates). Cache entries expire after 5 minutes.
-                                </div>
-                            </div>
-
                             <div class="mb-3">
                                 <label for="excelFile" class="form-label">Upload Excel File</label>
                                 <input type="file" class="form-control" id="excelFile" accept=".xlsx,.xls" required>
@@ -152,10 +159,37 @@
                     </form>
 
                     <div id="error" class="alert alert-danger mt-3 d-none"></div>
+                    
                     <div id="status" class="alert alert-success mt-3 d-none">
-                        <div id="statusContent"></div>
+                        <div id="statusContent">
+                            <!-- Batch status information will be displayed here -->
+                        </div>
                         <div class="progress mt-3 d-none">
                             <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        
+                        <!-- Results section -->
+                        <div id="resultsSection" class="mt-4 d-none">
+                            <h5 class="mb-3">Batch Results</h5>
+                            <div class="results-table">
+                                <table class="table table-striped table-bordered">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 15%">Custom ID</th>
+                                            <th style="width: 10%">Status</th>
+                                            <th style="width: 75%">Response</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="resultsTableBody">
+                                        <!-- Results will be populated here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="mt-3">
+                                <button class="btn btn-outline-primary" id="downloadResults">
+                                    <i class="bi bi-download"></i> Download Results as CSV
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -177,416 +211,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="index.js"></script>
 
-<script>
-    // State management
-    const debugState = {
-        domLoaded: false,
-        xlsxLoaded: false,
-        initCompleted: false,
-        errors: [],
-        logs: []
-    };
-
-    let isProcessing = false;
-    let excelData = [];
-    const pageLoadStart = performance.now();
-
-    // Debug functionality
-    function debugLog(message, type = 'info') {
-        const timestamp = new Date().toISOString();
-        const log = `[${timestamp}] [${type}] ${message}`;
-        debugState.logs.push(log);
-
-        const debugOutput = document.getElementById('debugOutput');
-        if (debugOutput) {
-            debugOutput.textContent = debugState.logs.join('\n');
-            debugOutput.scrollTop = debugOutput.scrollHeight;
-        }
-
-        console[type](message);
-    }
-
-    // Toggle debug panel
-    document.getElementById('toggleDebug').addEventListener('click', () => {
-        document.querySelector('.debug-panel').classList.toggle('show');
-    });
-
-    // Toggle API key visibility
-    document.getElementById('toggleApiKey').addEventListener('click', (e) => {
-        const input = document.getElementById('apiKey');
-        const spans = e.currentTarget.getElementsByTagName('span');
-        if (input.type === 'password') {
-            input.type = 'text';
-            spans[0].classList.remove('d-none');
-            spans[1].classList.add('d-none');
-        } else {
-            input.type = 'password';
-            spans[0].classList.add('d-none');
-            spans[1].classList.remove('d-none');
-        }
-    });
-
-    // Form initialization
-    function initializeForm() {
-        const endpoint = document.getElementById('apiEndpoint');
-        const testButton = document.getElementById('testEndpoint');
-        const formContent = document.querySelector('.form-content');
-        const submitButton = document.querySelector('button[type="submit"]');
-
-        // Update form state based on endpoint
-        function updateFormState() {
-            const hasEndpoint = endpoint.value.trim() !== '';
-            testButton.disabled = !hasEndpoint;
-            formContent.classList.toggle('disabled', !hasEndpoint);
-            submitButton.disabled = !hasEndpoint;
-
-            if (!hasEndpoint) {
-                document.getElementById('currentEndpoint').textContent =
-                    'Please enter your Cloudflare Worker endpoint to begin';
-            } else {
-                document.getElementById('currentEndpoint').textContent =
-                    `Current endpoint: ${endpoint.value.trim()}`;
-            }
-        }
-
-        // Test endpoint connection
-        async function testEndpoint() {
-            const url = endpoint.value.trim();
-            if (!url) return;
-
-            testButton.disabled = true;
-            testButton.textContent = 'Testing...';
-
-            try {
-                const response = await fetch(url, {
-                    method: 'OPTIONS'
-                });
-
-                if (response.ok) {
-                    updateEndpointStatus('Endpoint connection successful', 'success');
-                } else {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-            } catch (error) {
-                updateEndpointStatus(`Connection failed: ${error.message}`, 'danger');
-            } finally {
-                testButton.disabled = false;
-                testButton.textContent = 'Test';
-            }
-        }
-
-        endpoint.addEventListener('input', updateFormState);
-        testButton.addEventListener('click', testEndpoint);
-        updateFormState();
-    }
-
-    // Update endpoint status
-    function updateEndpointStatus(message, type = 'info') {
-        const statusDiv = document.getElementById('endpointStatus');
-        statusDiv.innerHTML = `<div class="alert alert-${type} mb-0 mt-2">${message}</div>`;
-    }
-
-    // Excel file handling
-    document.getElementById('excelFile').addEventListener('change', handleFileUpload);
-
-    function handleFileUpload(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        debugLog(`Processing file: ${file.name}`);
-        const reader = new FileReader();
-
-        reader.onload = (e) => {
-            try {
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const firstSheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[firstSheetName];
-                excelData = XLSX.utils.sheet_to_json(worksheet);
-
-                debugLog(`Excel data loaded: ${excelData.length} rows`);
-                showExcelInfo();
-
-            } catch (error) {
-                debugLog(`Excel processing error: ${error.message}`, 'error');
-                showError('Error reading Excel file: ' + error.message);
-            }
-        };
-
-        reader.onerror = () => {
-            const error = 'Error reading file';
-            debugLog(error, 'error');
-            showError(error);
-        };
-
-        reader.readAsArrayBuffer(file);
-    }
-
-    function showExcelInfo() {
-        const infoElement = document.getElementById('excelInfo');
-        const summaryElement = infoElement.querySelector('.excel-summary');
-        const previewElement = infoElement.querySelector('.excel-preview');
-        const previewBody = previewElement.querySelector('tbody');
-
-        summaryElement.textContent = `Loaded ${excelData.length} rows from Excel`;
-
-        if (excelData.length > 0) {
-            previewBody.innerHTML = '';
-            excelData.slice(0, 5).forEach(row => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                        <td>${row.custom_id || 'N/A'}</td>
-                        <td>${row.user_message ? row.user_message.substring(0, 50) + '...' : 'N/A'}</td>
-                    `;
-                previewBody.appendChild(tr);
-            });
-            previewElement.classList.remove('d-none');
-        }
-
-        infoElement.classList.remove('d-none');
-    }
-
-    // Form submission handling
-    document.getElementById('batchForm').addEventListener('submit', handleFormSubmit);
-
-    async function handleFormSubmit(e) {
-        e.preventDefault();
-        if (isProcessing) return;
-
-        const form = e.target;
-        const submitBtn = form.querySelector('button[type="submit"]');
-
-        resetStatus();
-
-        if (!excelData.length) {
-            showError('Please upload an Excel file first');
-            return;
-        }
-
-        const formData = getFormData();
-        if (!validateFormData(formData)) return;
-
-        try {
-            debugLog('Starting batch submission...');
-            setProcessing(true, submitBtn);
-            const requests = createRequests(formData);
-            debugLog(`Created ${requests.length} requests`);
-
-            const response = await sendBatchRequest(formData, requests);
-            const data = await handleResponse(response);
-            debugLog('Batch submitted successfully', 'info');
-            showStatus(data);
-        } catch (error) {
-            debugLog(`Batch submission error: ${error.message}`, 'error');
-            handleError(error);
-        } finally {
-            setProcessing(false, submitBtn);
-        }
-    }
-
-    // Form data handling
-    function getFormData() {
-        return {
-            apiEndpoint: document.getElementById('apiEndpoint').value.trim(),
-            apiKey: document.getElementById('apiKey').value,
-            model: document.getElementById('model').value,
-            maxTokens: parseInt(document.getElementById('maxTokens').value),
-            systemPrompt: document.getElementById('systemPrompt').value.trim(),
-            useCache: document.getElementById('useCache').checked
-        };
-    }
-
-    function validateFormData(formData) {
-        if (!formData.apiEndpoint) {
-            showError('Please enter the Worker endpoint');
-            return false;
-        }
-        if (!formData.apiKey) {
-            showError('Please enter your API key');
-            return false;
-        }
-        if (!formData.model) {
-            showError('Please select a model');
-            return false;
-        }
-        if (isNaN(formData.maxTokens) || formData.maxTokens < 1 || formData.maxTokens > 4096) {
-            showError('Max tokens must be between 1 and 4096');
-            return false;
-        }
-        return true;
-    }
-
-    // Request creation and handling
-    function createRequests(formData) {
-        return excelData.map(row => ({
-            custom_id: row.custom_id?.toString() || generateCustomId(),
-            params: {
-                model: formData.model,
-                max_tokens: formData.maxTokens,
-                system: formData.systemPrompt ? [
-                    {
-                        type: "text",
-                        text: formData.systemPrompt,
-                        cache_control: { type: "ephemeral" }
-                    }
-                ] : undefined,
-                messages: [{
-                    role: 'user',
-                    content: row.user_message
-                }]
-            }
-        }));
-    }
-
-    function generateCustomId() {
-        return 'req_' + Math.random().toString(36).substr(2, 9);
-    }
-
-    async function sendBatchRequest(formData, requests) {
-        const endpoint = `${formData.apiEndpoint}/messages/batches`;
-
-        // 修改 requests 格式，加入 cache_control
-        const modifiedRequests = requests.map(request => {
-            if (request.params.system) {
-                // 如果原本就有 system 內容，替每個部分加入 cache_control
-                request.params.system = request.params.system.map(sys => ({
-                    ...sys,
-                    cache_control: { type: "ephemeral" }
-                }));
-            }
-            return request;
-        });
-
-        // Prepare request body (移除 use_cache)
-        const requestBody = {
-            requests: modifiedRequests
-        };
-
-        // Log request details
-        debugLog(`Sending request to: ${endpoint}`);
-        debugLog('Request Headers:', 'debug');
-        debugLog(JSON.stringify({
-            'x-api-key': '********', // Hide API key
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json'
-        }, null, 2), 'debug');
-
-        debugLog('Request Body:', 'debug');
-        debugLog(JSON.stringify(requestBody, null, 2), 'debug');
-
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-                'x-api-key': formData.apiKey,
-                'anthropic-version': '2023-06-01',
-                'content-type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
-        });
-
-        // Log response
-        const responseText = await response.text();
-        debugLog('Response Status:', 'debug');
-        debugLog(`${response.status} ${response.statusText}`, 'debug');
-
-        debugLog('Response Headers:', 'debug');
-        debugLog(JSON.stringify(Object.fromEntries([...response.headers]), null, 2), 'debug');
-
-        debugLog('Response Body:', 'debug');
-        debugLog(responseText, 'debug');
-
-        if (!response.ok) {
-            let errorMessage;
-            try {
-                const errorData = JSON.parse(responseText);
-                errorMessage = errorData.error?.message || `HTTP ${response.status}`;
-            } catch (e) {
-                errorMessage = `HTTP ${response.status}: ${responseText}`;
-            }
-            throw new Error(errorMessage);
-        }
-
-        // Return a new response since we consumed the original one
-        return new Response(responseText, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: response.headers
-        });
-    }
-
-    async function handleResponse(response) {
-        const data = await response.json();
-        if (!response.ok) {
-            throw new Error(data.error?.message || `HTTP ${response.status}`);
-        }
-        return data;
-    }
-
-    // UI state management
-    function setProcessing(processing, submitBtn) {
-        isProcessing = processing;
-        submitBtn.disabled = processing;
-        submitBtn.classList.toggle('loading', processing);
-    }
-
-    function showError(message) {
-        const errorDiv = document.getElementById('error');
-        errorDiv.textContent = message;
-        errorDiv.classList.remove('d-none');
-    }
-
-    function handleError(error) {
-        showError(error.message);
-        const submitBtn = document.querySelector('button[type="submit"]');
-        setProcessing(false, submitBtn);  // 確保傳入正確的按鈕元素
-    }
-
-    function showStatus(data) {
-        const statusDiv = document.getElementById('status');
-        const statusContent = document.getElementById('statusContent');
-        const progressBar = statusDiv.querySelector('.progress-bar');
-
-        statusContent.innerHTML = `
-                <h5>Batch Submitted Successfully</h5>
-                <p>Batch ID: ${data.batch_id}</p>
-                <p>Status: ${data.status}</p>
-                <p>Total Requests: ${data.total_requests}</p>
-            `;
-
-        if (data.progress) {
-            progressBar.style.width = `${data.progress * 100}%`;
-            progressBar.parentElement.classList.remove('d-none');
-        }
-
-        statusDiv.classList.remove('d-none');
-    }
-
-    function resetStatus() {
-        document.getElementById('error').classList.add('d-none');
-        document.getElementById('status').classList.add('d-none');
-        document.querySelector('.progress').classList.add('d-none');
-        document.querySelector('.progress-bar').style.width = '0%';
-    }
-
-    // Initialize everything when DOM is loaded
-    document.addEventListener('DOMContentLoaded', () => {
-        initializeForm();
-        debugState.domLoaded = true;
-        debugLog('DOM loaded, form initialized');
-
-        // Check XLSX library
-        if (typeof XLSX !== 'undefined') {
-            debugState.xlsxLoaded = true;
-            debugLog('XLSX library loaded successfully');
-        } else {
-            const error = 'XLSX library failed to load';
-            debugState.errors.push(error);
-            debugLog(error, 'error');
-        }
-
-        debugState.initCompleted = true;
-        const loadTime = performance.now() - pageLoadStart;
-        debugLog(`Initialization completed in ${loadTime}ms`);
-    });
-</script>
+</body>
+</html>
